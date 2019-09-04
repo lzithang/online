@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netcoreapp2.1</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AutoMapper" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Model\Model.csproj" />
+    <ProjectReference Include="..\VS.Common\VS.Common.csproj" />
+    <ProjectReference Include="..\VS.IRepository\VS.IRepository.csproj" />
+    <ProjectReference Include="..\VS.IService\VS.IService.csproj" />
+  </ItemGroup>
+
+</Project>
