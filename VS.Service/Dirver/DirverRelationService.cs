@@ -17,6 +17,13 @@ namespace VS.Service
 			BaseDal = _dirverRelationDal;
 		}
 
-
-	}
+        /// <summary>
+        /// 获取所有元件
+        /// </summary>
+        /// <returns></returns>
+        public Dictionary<int, object> GetUnitAll(int areaId, int mcId)
+        {
+            return _dirverRelationDal.GetUnitAll(areaId, mcId);
+        }
+    }
 }
