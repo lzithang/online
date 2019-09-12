@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using VS.Common;
 using VS.IService;
 
@@ -15,19 +16,48 @@ namespace VS.OnLineManager
     {
         private SiteModel _site;
         private SocketMiddleware _socket;
-
+        private Dictionary<string, List<FeatureItem>> _machineFeatureItem;
+        private List<MalfunctionParameter> _parameterList;
         /// <summary>
         /// 服务对象
         /// </summary>
         private ITachoDefindService _tachoDefindService ;
         private IMeterageSamplerateService _meterageSamplerateService;
         private IDataTwService _dataTwService;
+        private IDirverRelationService _dirverRelationService;
+        private IMachineRevService _machineRevService;
+        private IMalfunctionSettingService _malfunctionSettingService;
+        private IMalfunctionTypeService _malfunctionTypeService;
+        private IMalfunctionParameterService _malfunctionParameterService;
 
-        public ExtractModule(ITachoDefindService tachoDefindService,IMeterageSamplerateService meterageSamplerateService,IDataTwService dataTwService)
+        public ExtractModule(
+            ITachoDefindService tachoDefindService,
+            IMeterageSamplerateService meterageSamplerateService,
+            IDataTwService dataTwService,
+            IDirverRelationService dirverRelationService,
+            IMachineRevService machineRevService,
+            IMalfunctionSettingService malfunctionSettingService,
+            IMalfunctionTypeService malfunctionTypeService,
+            IMalfunctionParameterService malfunctionParameterService)
         {
+            _malfunctionSettingService = malfunctionSettingService;
+            _malfunctionTypeService = malfunctionTypeService;
+            _machineRevService = machineRevService;
+            _dirverRelationService = dirverRelationService;
             _dataTwService = dataTwService;
             _tachoDefindService = tachoDefindService;
             _meterageSamplerateService = meterageSamplerateService;
+
+            if (!RedisHelper.Exists("MalParameter"))
+            {
+                _parameterList = _malfunctionParameterService.QueryList();
+                RedisHelper.Set("MalParameter", _parameterList);
+            }
+            else
+            {
+                _parameterList = RedisHelper.Get<List<MalfunctionParameter>>("MalParameter");
+            }
+           
         }
 
         /// <summary>
@@ -43,7 +73,7 @@ namespace VS.OnLineManager
             List<TachoDefind> tachoDefindList = _tachoDefindService.Query(td => td.AreaId == _site.AearId);
             foreach (TachoDefind tachoDefind in tachoDefindList)
             {
-                MeterageSamplerate ms = meterageSamplerateList.FirstOrDefault(m => m.MsrId == tachoDefind.MsrId);
+                MeterageSamplerate ms = meterageSamplerateList.FirstOrDefault(m => m.MsrId == tachoDefind.MsrId && m.IsSamplerate == 1);
                 if (ms == null)
                     continue;
                 //获取频谱数据
@@ -52,15 +82,112 @@ namespace VS.OnLineManager
                     continue;
                 float[] data = ToFloatArray(tw.Data);
                 float rev =  ExtractRPM(data,tw.DataHz/((float)tw.DataLines), tachoDefind);
+                GetMalfunctionSettingList(ms, (int)rev);
             }
 
             foreach (MeterageSamplerate ms in meterageSamplerateList)
             {
                 if (tachoDefindList.FirstOrDefault(t => t.MsrId == ms.MsrId) != null)
                     continue;
-                GetTwFFTData(ms);
+                DataTw tw = GetTwFFTData(ms);
+                float[] data = ToFloatArray(tw.Data);
+                GetMalfunctionSettingList(ms);
             }
 
+        }
+
+        private List<MalfunctionSetting> GetMalfunctionSettingList(MeterageSamplerate ms,int rev = -1)
+        {
+            string key = $"A{ms.AreaId}M{ms.McId}";
+            List<FeatureItem> featureList = null;
+            if (!_machineFeatureItem.ContainsKey(key))
+            {
+                DirverHelper dirverHelper = new DirverHelper();
+                dirverHelper.InitDirverData(ms.AreaId, ms.McId, _dirverRelationService, _machineRevService);
+                dirverHelper.CreateFeatureItemList(0, rev);
+                featureList = dirverHelper._featureItemList;
+                _machineFeatureItem.Add(key, dirverHelper._featureItemList);
+            }
+            else
+            {
+                featureList = _machineFeatureItem[key];
+            }
+            
+            List<MalfunctionSetting> settingList = _malfunctionSettingService.GetMalfunctionSettingListByMsrId(ms.MsrId);
+            foreach (MalfunctionSetting item in settingList)
+            {
+                FeatureItem feature = featureList.FirstOrDefault(f => f.FMtId == item.UnitType && f.FKey == item.UnitId);
+                List<MalfunctionParameter> parameterList = _parameterList.FindAll(p => p.MtId == item.MtId);
+                foreach (var parameter in parameterList)
+                {
+                    item.CommonFormula = CalcParameter(item.CommonFormula,parameter.MpName, feature);
+                    item.RemoveFrequency = CalcParameter(item.RemoveFrequency, parameter.MpName, feature);
+                    item.SidebandFrequency = CalcParameter(item.SidebandFrequency, parameter.MpName, feature);
+                    item.CenterFrequency = CalcParameter(item.CenterFrequency, parameter.MpName, feature);
+                }
+            }
+            return settingList;
+        }
+
+        /// <summary>
+        /// 参数替换
+        /// </summary>
+        /// <param name="expression"></param>
+        /// <param name="paras"></param>
+        /// <returns></returns>
+        private string CalcParameter(string expression, string paras,FeatureItem feature)
+        {
+            string strTemp = expression;
+            if (!string.IsNullOrEmpty(expression))
+            {
+                if (expression.ToLower().Contains(paras))
+                {
+                    strTemp = CalcParameter(expression.ToLower().Replace(paras, feature[paras].ToString("#0.00")));
+                }
+            }
+            return strTemp;
+        }
+
+        /// <summary>
+        /// 计算参数
+        /// </summary>
+        /// <param name="expression"></param>
+        /// <returns></returns>
+        private string CalcParameter(string expression)
+        {
+            //是否包含英文字符，包含继续替换
+            string pattern = @"[A-Za-z]";
+            Regex regex = new Regex(pattern);
+            if (regex.IsMatch(expression))
+            {
+                return expression;
+            }
+
+            string[] itemArray = null;
+            char solit = ',';
+            if (expression.IndexOf(',') > -1)
+            {
+                itemArray = expression.Split(new char[] { solit });
+            }
+            else if (expression.IndexOf('_') > -1)
+            {
+                solit = '_';
+                itemArray = expression.Split(new char[] { solit });
+            }
+            else
+            {
+                itemArray = new string[] { expression };
+            }
+            string strTemp = string.Empty;
+            if (itemArray != null && itemArray.Length > 0)
+            {
+                foreach (string item in itemArray)
+                {
+                   strTemp += CalcHelper.CalcExpression(item) + solit.ToString();
+                }
+                strTemp = strTemp.Substring(0, strTemp.Length - 1);
+            }
+            return strTemp;
         }
 
         /// <summary>

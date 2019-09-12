@@ -34,7 +34,7 @@ namespace Model
 		/// 
 		/// </summary>
 		[SugarColumn(ColumnName ="dl_D")]
-		public float dl_D { get; set; }
+		public float DlD { get; set; }
 
 		/// </summary>
 		/// 
