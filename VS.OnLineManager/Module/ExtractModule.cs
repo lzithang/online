@@ -12,11 +12,11 @@ namespace VS.OnLineManager
     /// <summary>
     /// 特征值提取
     /// </summary>
-    public class ExtractModule
+    public class ExtractModule: IExtractModule
     {
         private SiteModel _site;
         private SocketMiddleware _socket;
-        private Dictionary<string, List<FeatureItem>> _machineFeatureItem;
+        private Dictionary<string, List<FeatureItem>> _machineFeatureItem =new Dictionary<string, List<FeatureItem>>();
         private List<MalfunctionParameter> _parameterList;
         /// <summary>
         /// 服务对象
@@ -47,7 +47,7 @@ namespace VS.OnLineManager
             _dataTwService = dataTwService;
             _tachoDefindService = tachoDefindService;
             _meterageSamplerateService = meterageSamplerateService;
-
+            _malfunctionParameterService = malfunctionParameterService;
             if (!RedisHelper.Exists("MalParameter"))
             {
                 _parameterList = _malfunctionParameterService.QueryList();
@@ -57,7 +57,6 @@ namespace VS.OnLineManager
             {
                 _parameterList = RedisHelper.Get<List<MalfunctionParameter>>("MalParameter");
             }
-           
         }
 
         /// <summary>
@@ -70,6 +69,8 @@ namespace VS.OnLineManager
             _site = site;
             _socket = socket;
             List<MeterageSamplerate> meterageSamplerateList = _meterageSamplerateService.Query(ms => ms.AreaId == _site.AearId);
+
+            //提取转速
             List<TachoDefind> tachoDefindList = _tachoDefindService.Query(td => td.AreaId == _site.AearId);
             foreach (TachoDefind tachoDefind in tachoDefindList)
             {
@@ -81,8 +82,34 @@ namespace VS.OnLineManager
                 if (tw == null)
                     continue;
                 float[] data = ToFloatArray(tw.Data);
-                float rev =  ExtractRPM(data,tw.DataHz/((float)tw.DataLines), tachoDefind);
-                GetMalfunctionSettingList(ms, (int)rev);
+                float rev = ExtractRPM(data, tw.DataHz / ((float)tw.DataLines), tachoDefind);
+                //修改转速
+                MachineRev machineRev = _machineRevService.Query(m => m.AreaId == tachoDefind.AreaId && m.McId == tachoDefind.McId).FirstOrDefault();
+                if (machineRev != null)
+                {
+                    machineRev.MrRev = rev;
+                    machineRev.MrTime = DateTime.Now;
+                    _machineRevService.UpdateEntity(machineRev);
+                }
+                else
+                {
+                    machineRev = new MachineRev()
+                    {
+                        AreaId = tachoDefind.AreaId,
+                        McId = tachoDefind.McId,
+                        MrTime = DateTime.Now,
+                        MrLevel = 2,
+                        MrRev = rev
+                    };
+                    _machineRevService.InsertEntity(machineRev);
+                }
+
+                List<MalfunctionSetting> settingList = GetMalfunctionSettingList(ms, (int)rev);
+                foreach (MalfunctionSetting setting in settingList)
+                {
+                    FeatureExtraction featureExtraction = new FeatureExtraction(tw);
+                    float value = featureExtraction.ComputedFeature(setting);
+                }
             }
 
             foreach (MeterageSamplerate ms in meterageSamplerateList)
@@ -91,7 +118,14 @@ namespace VS.OnLineManager
                     continue;
                 DataTw tw = GetTwFFTData(ms);
                 float[] data = ToFloatArray(tw.Data);
-                GetMalfunctionSettingList(ms);
+                List<MalfunctionSetting> settingList = GetMalfunctionSettingList(ms);
+
+                foreach (MalfunctionSetting setting in settingList)
+                {
+                    FeatureExtraction featureExtraction = new FeatureExtraction(tw);
+                    float value = featureExtraction.ComputedFeature(setting);
+                    Console.WriteLine($"{setting.TypeName}:{value}");
+                }
             }
 
         }
@@ -116,14 +150,14 @@ namespace VS.OnLineManager
             List<MalfunctionSetting> settingList = _malfunctionSettingService.GetMalfunctionSettingListByMsrId(ms.MsrId);
             foreach (MalfunctionSetting item in settingList)
             {
-                FeatureItem feature = featureList.FirstOrDefault(f => f.FMtId == item.UnitType && f.FKey == item.UnitId);
+                FeatureItem feature = featureList.FirstOrDefault(f => f.FType == item.UnitType && f.FKey == item.UnitId);
                 List<MalfunctionParameter> parameterList = _parameterList.FindAll(p => p.MtId == item.MtId);
                 foreach (var parameter in parameterList)
                 {
-                    item.CommonFormula = CalcParameter(item.CommonFormula,parameter.MpName, feature);
-                    item.RemoveFrequency = CalcParameter(item.RemoveFrequency, parameter.MpName, feature);
-                    item.SidebandFrequency = CalcParameter(item.SidebandFrequency, parameter.MpName, feature);
-                    item.CenterFrequency = CalcParameter(item.CenterFrequency, parameter.MpName, feature);
+                    item.CommonFormula = CalcParameter(item.CommonFormula,parameter.MpName.ToLower(), feature);
+                    item.RemoveFrequency = CalcParameter(item.RemoveFrequency, parameter.MpName.ToLower(), feature);
+                    item.SidebandFrequency = CalcParameter(item.SidebandFrequency, parameter.MpName.ToLower(), feature);
+                    item.CenterFrequency = CalcParameter(item.CenterFrequency, parameter.MpName.ToLower(), feature);
                 }
             }
             return settingList;
@@ -140,7 +174,7 @@ namespace VS.OnLineManager
             string strTemp = expression;
             if (!string.IsNullOrEmpty(expression))
             {
-                if (expression.ToLower().Contains(paras))
+                if (expression.ToLower().Contains(paras.ToLower()))
                 {
                     strTemp = CalcParameter(expression.ToLower().Replace(paras, feature[paras].ToString("#0.00")));
                 }
@@ -526,7 +560,7 @@ namespace VS.OnLineManager
         /// <param name="ratio">分辨率</param>
         /// <param name="tachoDefind">转速提取条件</param>
         /// <returns></returns>
-        public float ExtractRPM(float[] data,float ratio,TachoDefind tachoDefind)
+        private float ExtractRPM(float[] data,float ratio,TachoDefind tachoDefind)
         {
             float RpmF = 0.0f;
             float HzF = 0.0f;

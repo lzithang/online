@@ -45,8 +45,8 @@ namespace VS.Repository
             sql = "SELECT * FROM  tb_dirver_roller WHERE area_id =@AreaId and mc_id=@McId";
             pairs.Add(9, Db.Ado.SqlQuery<DirverRoller>(sql, obj));
             //¹ö¶¯Öá³Ð
-            sql = "SELECT * FROM  tb_dirver_bearing_info WHERE area_id =@AreaId and mc_id=@McId";
-            pairs.Add(11, Db.Ado.SqlQuery<DirverBearingInfo>(sql, obj));
+            sql = "SELECT * FROM  tb_dirver_bearing WHERE area_id =@AreaId and mc_id=@McId";
+            pairs.Add(11, Db.Ado.SqlQuery<DirverBearing>(sql, obj));
             //»¬¶¯Öá³Ð
             sql = "SELECT * FROM  tb_dirver_bearing_slide WHERE area_id =@AreaId and mc_id=@McId";
             pairs.Add(12, Db.Ado.SqlQuery<DirverBearingSlide>(sql, obj));

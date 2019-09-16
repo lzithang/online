@@ -48,6 +48,7 @@ namespace VS.OnLineManager
             services.AddTransient<ISiteModule, SiteModule>();
             services.AddTransient<IDataOaModule, DataOaModule>();
             services.AddTransient<IDataTwModule, DataTwModule>();
+            services.AddTransient<IExtractModule, ExtractModule>();
             services.AddTransient<IConfigModule, ConfigModule>();
             services.AddTransient<IOaAlarmModule, OaAlarmModule>();
             services.AddSingleton<ILoggerHelper, LogHelper>();

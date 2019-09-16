@@ -115,7 +115,7 @@ namespace Model
 		public int MmId { get; set; }
 
 		/// </summary>
-		/// 1百分比，2频段
+		/// 1百分比，2频段 3谱线数
 		/// </summary>
 		[SugarColumn(ColumnName ="find_type")]
 		public int FindType { get; set; }

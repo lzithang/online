@@ -48,8 +48,11 @@ namespace VS.OnLineManager
 
                 if (site.HasTwData)
                 {
-                    IDataTwModule dataTwModule = Program.container.Resolve<IDataTwModule>();
-                    dataTwModule.GetDataTw(site, _socket);
+                    //IDataTwModule dataTwModule = Program.container.Resolve<IDataTwModule>();
+                    //dataTwModule.GetDataTw(site, _socket);
+
+                    IExtractModule extractModule = Program.container.Resolve<IExtractModule>();
+                    extractModule.InitConfig(site, _socket);
                 }
 
                 #region 配置更新

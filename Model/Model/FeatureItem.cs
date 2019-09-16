@@ -9,6 +9,10 @@ namespace Model
     /// </summary>
     public class FeatureItem
     {
+        public FeatureItem()
+        {
+            CalcFrequency = new Dictionary<string, float>();
+        }
         /// <summary>
         /// key（元件ID）
         /// </summary>

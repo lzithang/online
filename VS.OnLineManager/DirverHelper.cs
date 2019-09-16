@@ -186,9 +186,14 @@ namespace VS.OnLineManager
             if(inRpm < 0)
             {
                 if (_machineRev != null)
+                {
                     inRpm = (int)_machineRev.MrRev;
+                }
                 else
-                    inRpm = (int)dirver.Input;
+                {
+                    inRpm = (int)dirver.Output;
+                }
+                    
             }
             return GetFeatureItem(nType,obj,inRpm);
         }
@@ -474,7 +479,7 @@ namespace VS.OnLineManager
         /// <param name="n1"></param>
         /// <param name="n2"></param>
         /// <returns></returns>
-        public int GCD(int n1, int n2)
+        private int GCD(int n1, int n2)
         {
             int temp = Math.Max(n1, n2);
             n2 = Math.Min(n1, n2);//n2中存放两个数中最小的
