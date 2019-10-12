@@ -19,7 +19,9 @@ namespace VS.OnLineManager
         public MyDataProfile()
         {
             CreateMap<ConfigBindModel,ChannelStruct>();
+            CreateMap<DataTwModel, DataTw>();
             CreateMap<string, char[]>().ConvertUsing<StringToCharArrayConvertert>();
+            CreateMap<byte[], float[]>().ConvertUsing<ByteToFloatConvertert>();
         }
     }
 
@@ -37,6 +39,10 @@ namespace VS.OnLineManager
         /// <returns></returns>
         public float[] Convert(byte[] source, float[] destination, ResolutionContext context)
         {
+            if(source == null || source.Length == 0)
+            {
+                return new float[0];
+            }
             int count = source.Length / 4;
             float[] tw = new float[count];
             for (int i = 0; i < count; i++)

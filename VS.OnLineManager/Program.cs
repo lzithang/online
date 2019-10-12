@@ -52,6 +52,7 @@ namespace VS.OnLineManager
             services.AddTransient<IConfigModule, ConfigModule>();
             services.AddTransient<IOaAlarmModule, OaAlarmModule>();
             services.AddSingleton<ILoggerHelper, LogHelper>();
+            services.AddTransient<IStopModule, StopModule>();
 
             ContainerBuilder builder = new ContainerBuilder();
             var servicesDllFile = Path.Combine(basePath, "Vs.Service.dll");
@@ -136,6 +137,10 @@ namespace VS.OnLineManager
             
         }
 
+        /// <summary>
+        /// 发送邮件
+        /// </summary>
+        /// <param name="obj"></param>
         static void SendEmail(object obj)
         {
             while (true)

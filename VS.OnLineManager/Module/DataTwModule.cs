@@ -16,10 +16,12 @@ namespace VS.OnLineManager
         {
             _dataTwService = dataTwService;
             _meterageSamplerateService = meterageSamplerateService;
+            
         }
 
         public void GetDataTw(SiteModel site, SocketMiddleware socket)
         {
+           Dictionary<string,bool> stopDic = RedisHelper.Get<Dictionary<string, bool>>($"{CallContext.GetData<ClientInfo>("clientInfo").Database}IsStop");
             Console.WriteLine("开始采集波形数据!");
             //存储集合
             List<int> workStatuesList = null;
@@ -30,6 +32,11 @@ namespace VS.OnLineManager
             byte[] recData = new byte[20];
             for (int i = 0; i < site.ChannelStructList.Count; i++)
             {
+                //是否停机状态
+                string key = $"A{site.ChannelStructList[i].AreaID}M{site.ChannelStructList[i].MachineID}";
+                if (stopDic.GetValueOrDefault(key))
+                    continue;
+
                 list = _meterageSamplerateService.Query(s =>
                 s.AreaId == site.ChannelStructList[i].AreaID &&
                 s.McId == site.ChannelStructList[i].MachineID &&

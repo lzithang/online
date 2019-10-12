@@ -1,4 +1,5 @@
-﻿using Model;
+﻿using AutoMapper;
+using Model;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,16 +13,44 @@ namespace VS.OnLineManager
     /// <summary>
     /// 特征值提取
     /// </summary>
-    public class ExtractModule: IExtractModule
+    public class ExtractModule : IExtractModule
     {
+        /// <summary>
+        /// 站点
+        /// </summary>
         private SiteModel _site;
+        /// <summary>
+        /// 数据交互对象
+        /// </summary>
         private SocketMiddleware _socket;
-        private Dictionary<string, List<FeatureItem>> _machineFeatureItem =new Dictionary<string, List<FeatureItem>>();
+        /// <summary>
+        /// 机器下所有元件特征值
+        /// </summary>
+        private Dictionary<string, List<FeatureItem>> _machineFeatureItem = new Dictionary<string, List<FeatureItem>>();
+        /// <summary>
+        /// 诊断参数
+        /// </summary>
         private List<MalfunctionParameter> _parameterList;
+        /// <summary>
+        /// 元件关系
+        /// </summary>
+        private List<DirverRelation> _dirverRelationList;
+        private Dictionary<DirverRelation, bool> _dirverRelationFirst = new Dictionary<DirverRelation, bool>();
+        /// <summary>
+        /// 机器停机状态（转速）
+        /// </summary>
+        private Dictionary<string, bool> _stopMachine = new Dictionary<string, bool>();
+
+        /// <summary>
+        /// 停机状态 （总值）
+        /// </summary>
+        private Dictionary<string, bool> _stopMachineOa = new Dictionary<string, bool>();
+
         /// <summary>
         /// 服务对象
         /// </summary>
-        private ITachoDefindService _tachoDefindService ;
+        private IMapper _mapper;
+        private ITachoDefindService _tachoDefindService;
         private IMeterageSamplerateService _meterageSamplerateService;
         private IDataTwService _dataTwService;
         private IDirverRelationService _dirverRelationService;
@@ -29,17 +58,22 @@ namespace VS.OnLineManager
         private IMalfunctionSettingService _malfunctionSettingService;
         private IMalfunctionTypeService _malfunctionTypeService;
         private IMalfunctionParameterService _malfunctionParameterService;
+        private IBandDiagnosisService _bandDiagnosisService;
 
         public ExtractModule(
-            ITachoDefindService tachoDefindService,
-            IMeterageSamplerateService meterageSamplerateService,
-            IDataTwService dataTwService,
-            IDirverRelationService dirverRelationService,
-            IMachineRevService machineRevService,
-            IMalfunctionSettingService malfunctionSettingService,
-            IMalfunctionTypeService malfunctionTypeService,
-            IMalfunctionParameterService malfunctionParameterService)
+            IMapper mapper,//映射 
+            ITachoDefindService tachoDefindService,//转速提取条件
+            IMeterageSamplerateService meterageSamplerateService, //测量参数
+            IDataTwService dataTwService, //波形数据
+            IDirverRelationService dirverRelationService, // 元件关系
+            IMachineRevService machineRevService, //机器转速
+            IMalfunctionSettingService malfunctionSettingService, // 特征值提取配置
+            IMalfunctionTypeService malfunctionTypeService, // 故障类型及公式
+            IBandDiagnosisService bandDiagnosisService,
+            IMalfunctionParameterService malfunctionParameterService) // 公式参数
         {
+            _mapper = mapper;
+            _bandDiagnosisService = bandDiagnosisService;
             _malfunctionSettingService = malfunctionSettingService;
             _malfunctionTypeService = malfunctionTypeService;
             _machineRevService = machineRevService;
@@ -48,6 +82,8 @@ namespace VS.OnLineManager
             _tachoDefindService = tachoDefindService;
             _meterageSamplerateService = meterageSamplerateService;
             _malfunctionParameterService = malfunctionParameterService;
+
+            //如果缓存没有公式参数 获取后缓存
             if (!RedisHelper.Exists("MalParameter"))
             {
                 _parameterList = _malfunctionParameterService.QueryList();
@@ -68,21 +104,33 @@ namespace VS.OnLineManager
         {
             _site = site;
             _socket = socket;
-            List<MeterageSamplerate> meterageSamplerateList = _meterageSamplerateService.Query(ms => ms.AreaId == _site.AearId);
+            _stopMachineOa = RedisHelper.Get<Dictionary<string, bool>>($"{CallContext.GetData<ClientInfo>("clientInfo").Database}IsStop");
+            _dirverRelationList = _dirverRelationService.Query(dr => dr.AreaId == _site.AearId);
 
-            //提取转速
+            //获取测量参数组 及转速定义
+            List<MeterageSamplerate> meterageSamplerateList = _meterageSamplerateService.Query(ms => ms.AreaId == _site.AearId && ms.IsSamplerate == 1);
             List<TachoDefind> tachoDefindList = _tachoDefindService.Query(td => td.AreaId == _site.AearId);
+
             foreach (TachoDefind tachoDefind in tachoDefindList)
             {
-                MeterageSamplerate ms = meterageSamplerateList.FirstOrDefault(m => m.MsrId == tachoDefind.MsrId && m.IsSamplerate == 1);
+                //没有找到需要的数据源，查找下一个
+                MeterageSamplerate ms = meterageSamplerateList.FirstOrDefault(m => m.MsrId == tachoDefind.MsrId);
                 if (ms == null)
                     continue;
+
                 //获取频谱数据
-                DataTw tw = GetTwFFTData(ms);
-                if (tw == null)
+                DataTwModel model = GetTwFFTData(ms);
+                if (model == null)
                     continue;
-                float[] data = ToFloatArray(tw.Data);
-                float rev = ExtractRPM(data, tw.DataHz / ((float)tw.DataLines), tachoDefind);
+                //提取转速
+                float rev = ExtractRPM(model.Data, model.DataHz / ((float)model.DataLines), tachoDefind);
+                Console.WriteLine($"转速：{rev}");
+                //停机转态不提取
+                if (rev <= 0)
+                {
+                    _stopMachine.Add($"A{tachoDefind.AreaId}M{tachoDefind.McId}", true);
+                    continue;
+                }
                 //修改转速
                 MachineRev machineRev = _machineRevService.Query(m => m.AreaId == tachoDefind.AreaId && m.McId == tachoDefind.McId).FirstOrDefault();
                 if (machineRev != null)
@@ -104,33 +152,88 @@ namespace VS.OnLineManager
                     _machineRevService.InsertEntity(machineRev);
                 }
 
-                List<MalfunctionSetting> settingList = GetMalfunctionSettingList(ms, (int)rev);
-                foreach (MalfunctionSetting setting in settingList)
-                {
-                    FeatureExtraction featureExtraction = new FeatureExtraction(tw);
-                    float value = featureExtraction.ComputedFeature(setting);
-                }
+                ExtractValue(model, ms, (int)rev);
             }
 
             foreach (MeterageSamplerate ms in meterageSamplerateList)
             {
                 if (tachoDefindList.FirstOrDefault(t => t.MsrId == ms.MsrId) != null)
                     continue;
-                DataTw tw = GetTwFFTData(ms);
-                float[] data = ToFloatArray(tw.Data);
-                List<MalfunctionSetting> settingList = GetMalfunctionSettingList(ms);
+                DataTwModel model = GetTwFFTData(ms);
+                if (model == null)
+                    continue;
 
-                foreach (MalfunctionSetting setting in settingList)
-                {
-                    FeatureExtraction featureExtraction = new FeatureExtraction(tw);
-                    float value = featureExtraction.ComputedFeature(setting);
-                    Console.WriteLine($"{setting.TypeName}:{value}");
-                }
+                //停机状态不提取
+                if (_stopMachine.ContainsKey($"A{ms.AreaId}M{ms.McId}"))
+                    continue;
+                ExtractValue(model, ms);
             }
 
+            //更新元件状态
+            foreach (DirverRelation dirverRelation in _dirverRelationList)
+            {
+                _dirverRelationService.UpdateEntity(dirverRelation);
+            }
         }
 
-        private List<MalfunctionSetting> GetMalfunctionSettingList(MeterageSamplerate ms,int rev = -1)
+        /// <summary>
+        /// 根据数据 提取特征值 存储
+        /// </summary>
+        /// <param name="model"></param>
+        /// <param name="ms"></param>
+        /// <param name="rev"></param>
+        private void ExtractValue(DataTwModel model, MeterageSamplerate ms, int rev = -1)
+        {
+            List<MalfunctionSetting> settingList = GetMalfunctionSettingList(ms, rev).OrderByDescending(m => m.TypeId).ToList();
+            List<BandDiagnosis> bandDiagnosisList = new List<BandDiagnosis>();
+            FeatureExtraction featureExtraction = new FeatureExtraction(model);
+            foreach (MalfunctionSetting setting in settingList)
+            {
+                float value = featureExtraction.ComputedFeature(setting);
+                Console.WriteLine($"{setting.TypeName}:{value}");
+                BandDiagnosis bandDiagnosis = new BandDiagnosis()
+                {
+                    BdTime = DateTime.Now,
+                    BdType = 1,
+                    BdUnit = "mm/s",
+                    MsId = setting.MsId,
+                    BdValue = value
+                };
+                bandDiagnosisList.Add(bandDiagnosis);
+                //报警状态设置
+                DirverRelation dirverRelation = _dirverRelationList.FirstOrDefault(dr => dr.DId == setting.UnitId && dr.DType == setting.UnitType);
+                if (dirverRelation == null)
+                    continue;
+                if (!_dirverRelationFirst.Keys.Contains(dirverRelation))
+                {
+                    _dirverRelationFirst.Add(dirverRelation, true);
+                    dirverRelation.DrState = 1;
+                }
+                int level = 1;
+                if (setting.Danger == 0)
+                    continue;
+                if (setting.Danger < value)
+                    level = 4;
+                else if (setting.Warning < value)
+                    level = 3;
+                else if (setting.EasyWarning < value)
+                    level = 2;
+
+                if (dirverRelation.DrState < level)
+                    dirverRelation.DrState = level;
+
+            }
+            if (bandDiagnosisList.Count > 0)
+                _bandDiagnosisService.InsertEntityList(bandDiagnosisList);
+        }
+
+        /// <summary>
+        /// 根据数据源 获取提取特征值的配置
+        /// </summary>
+        /// <param name="ms"></param>
+        /// <param name="rev"></param>
+        /// <returns></returns>
+        private List<MalfunctionSetting> GetMalfunctionSettingList(MeterageSamplerate ms, int rev = -1)
         {
             string key = $"A{ms.AreaId}M{ms.McId}";
             List<FeatureItem> featureList = null;
@@ -146,7 +249,7 @@ namespace VS.OnLineManager
             {
                 featureList = _machineFeatureItem[key];
             }
-            
+
             List<MalfunctionSetting> settingList = _malfunctionSettingService.GetMalfunctionSettingListByMsrId(ms.MsrId);
             foreach (MalfunctionSetting item in settingList)
             {
@@ -154,7 +257,7 @@ namespace VS.OnLineManager
                 List<MalfunctionParameter> parameterList = _parameterList.FindAll(p => p.MtId == item.MtId);
                 foreach (var parameter in parameterList)
                 {
-                    item.CommonFormula = CalcParameter(item.CommonFormula,parameter.MpName.ToLower(), feature);
+                    item.CommonFormula = CalcParameter(item.CommonFormula, parameter.MpName.ToLower(), feature);
                     item.RemoveFrequency = CalcParameter(item.RemoveFrequency, parameter.MpName.ToLower(), feature);
                     item.SidebandFrequency = CalcParameter(item.SidebandFrequency, parameter.MpName.ToLower(), feature);
                     item.CenterFrequency = CalcParameter(item.CenterFrequency, parameter.MpName.ToLower(), feature);
@@ -169,7 +272,7 @@ namespace VS.OnLineManager
         /// <param name="expression"></param>
         /// <param name="paras"></param>
         /// <returns></returns>
-        private string CalcParameter(string expression, string paras,FeatureItem feature)
+        private string CalcParameter(string expression, string paras, FeatureItem feature)
         {
             string strTemp = expression;
             if (!string.IsNullOrEmpty(expression))
@@ -217,7 +320,7 @@ namespace VS.OnLineManager
             {
                 foreach (string item in itemArray)
                 {
-                   strTemp += CalcHelper.CalcExpression(item) + solit.ToString();
+                    strTemp += CalcHelper.CalcExpression(item) + solit.ToString();
                 }
                 strTemp = strTemp.Substring(0, strTemp.Length - 1);
             }
@@ -229,8 +332,13 @@ namespace VS.OnLineManager
         /// </summary>
         /// <param name="meterageSamplerate">获取波形或频谱参数</param>
         /// <returns></returns>
-        private DataTw GetTwFFTData(MeterageSamplerate ms)
+        private DataTwModel GetTwFFTData(MeterageSamplerate ms)
         {
+            //是否停机状态
+            string key = $"A{ms.AreaId}M{ms.McId}";
+            if (_stopMachineOa.GetValueOrDefault(key))
+                return null;
+
             byte[] recData = new byte[20];
             int line = ms.MsrLine;
             int frequency = ms.MsrRateMax;
@@ -283,7 +391,6 @@ namespace VS.OnLineManager
                 {
                     return null;
                 }
-
                 Array.Copy(data, 7 * 4, tw.Data, 0, len - 7 * 4); //把波形数据copy到 tw.data中
 
                 if (ms.MsrParameter.ToLower().Contains("env")) //包络，直接存
@@ -368,7 +475,7 @@ namespace VS.OnLineManager
                     tw.Data = SplitMinFFT(tw.Data, ms); //截取最小Fmin
                     _dataTwService.InsertDataTw(tw, string.Format("tb_data_tw_{0}", ms.MsrName));
                 }
-                return tw;
+                return _mapper.Map<DataTwModel>(tw);
             }
 
             return null;
@@ -560,33 +667,33 @@ namespace VS.OnLineManager
         /// <param name="ratio">分辨率</param>
         /// <param name="tachoDefind">转速提取条件</param>
         /// <returns></returns>
-        private float ExtractRPM(float[] data,float ratio,TachoDefind tachoDefind)
+        private float ExtractRPM(float[] data, float ratio, TachoDefind tachoDefind)
         {
             float RpmF = 0.0f;
             float HzF = 0.0f;
- 
-                float nLeft = tachoDefind.TdHzMin;
-                float nRight = tachoDefind.TdHzMax;
-                int startIndex = (int)(tachoDefind.TdHzMin / ratio);
-                Dictionary<int, float> dataAmp = new Dictionary<int, float>();
-                for (int i = startIndex; i < data.Length; i++)
+
+            float nLeft = tachoDefind.TdHzMin;
+            float nRight = tachoDefind.TdHzMax;
+            int startIndex = (int)(tachoDefind.TdHzMin / ratio);
+            Dictionary<int, float> dataAmp = new Dictionary<int, float>();
+            for (int i = startIndex; i < data.Length; i++)
+            {
+                if (i * ratio > nRight)
+                    break;
+                dataAmp.Add(i, data[i]);
+            }
+            if (dataAmp.Count > 0)
+            {
+                foreach (KeyValuePair<int, float> keyValue in dataAmp)
                 {
-                    if (i * ratio > nRight)
-                        break;
-                    dataAmp.Add(i, data[i]);
-                }
-                if (dataAmp.Count > 0)
-                {
-                    foreach (KeyValuePair<int, float> keyValue in dataAmp)
+                    if (keyValue.Value > RpmF && keyValue.Value > tachoDefind.TdAmpMin)
                     {
-                        if (keyValue.Value > RpmF && keyValue.Value > tachoDefind.TdAmpMin)
-                        {
-                            RpmF = keyValue.Value;
-                            HzF = keyValue.Key * ratio;
-                        }
+                        RpmF = keyValue.Value;
+                        HzF = keyValue.Key * ratio;
                     }
                 }
-            
+            }
+
             return HzF * 60;
         }
 

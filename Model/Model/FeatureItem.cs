@@ -18,6 +18,10 @@ namespace Model
         /// </summary>
         public int FKey { get; set; }
         /// <summary>
+        /// 元件类型
+        /// </summary>
+        public int FType { get; set; }
+        /// <summary>
         /// 名称
         /// </summary>
         public string FName { get; set; }
@@ -49,14 +53,7 @@ namespace Model
         /// 显示输出转速
         /// </summary>
         public string FOutSpeedDisplay { get; set; }
-        /// <summary>
-        /// 元件类型
-        /// </summary>
-        public int FType { get; set; }
-        /// <summary>
-        /// 元件类型ID
-        /// </summary>
-        public int FMtId { get; set; }
+
         /// <summary>
         /// 存储对象
         /// </summary>

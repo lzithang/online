@@ -16,7 +16,6 @@ namespace VS.OnLineManager
         /// </summary>
         private IAlarmService _alarmService;
         private IMeterageService _meterageService;
-
         /// <summary>
         /// 对应工厂的总值队列数据
         /// </summary>

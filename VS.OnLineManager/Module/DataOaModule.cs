@@ -11,18 +11,30 @@ namespace VS.OnLineManager
     public class DataOaModule:IDataOaModule
     {
         private IDataOaService _dataOaService;
+        private IMachineStopService _machineStopService;
         private IMeterageService _meterageService;
+
         private IOaAlarmModule _oaAlarmModule;
-        public DataOaModule(IDataOaService dataOaService, IMeterageService meterageService,IOaAlarmModule oaAlarmModule)
+        private IStopModule _stopModule;
+
+        private List<MachineStop> _machineStopList;
+       
+        public DataOaModule(IDataOaService dataOaService, IMeterageService meterageService,IOaAlarmModule oaAlarmModule,IStopModule stopModule, IMachineStopService machineStopService)
         {
             _dataOaService = dataOaService;
             _meterageService = meterageService;
+            _machineStopService = machineStopService;
             _oaAlarmModule = oaAlarmModule;
+            _stopModule = stopModule;
+
+
         }
 
         public void GetDataOa(SiteModel site, SocketMiddleware socket)
         {
             Console.WriteLine("开始采集总值数据！");
+            _machineStopList = _machineStopService.Query(ms => ms.AreaId == site.AearId);
+
             try
             {
                 //通道OA的数据集合        
@@ -111,7 +123,7 @@ namespace VS.OnLineManager
                         InserDataOaList(amv);
 
                     }
-                    _oaAlarmModule.SaveCache();
+                    
                 }
                 #endregion
 
@@ -228,9 +240,15 @@ namespace VS.OnLineManager
                 list.Add(oAData);
                 Console.WriteLine(string.Format("总值数据BG:{0}, BV:{1}, ENV:{2}, DISP:{3}, VEL:{4}, ACC:{5}, CF:{6},KURT:{7},Temp:{8} ", oAData.OaBg, oAData.OaBv, oAData.OaEnv, oAData.OaDisp, oAData.OaVel, oAData.OaAcc, oAData.OaCF, oAData.OaKurt,oAData.OaTemp));
             }
-            _dataOaService.InsertEntityList(list);
-            _oaAlarmModule.ValidateAlarm(list, meterage);
-           
+
+            //验证是否停机状态 报警验证及添加数据
+            if (!_stopModule.ValidateStop(list, meterage, _machineStopList))
+            {
+                _dataOaService.InsertEntityList(list);
+                _oaAlarmModule.ValidateAlarm(list, meterage);
+                _oaAlarmModule.SaveCache();
+            }
+            
         }
        
 

@@ -11,7 +11,7 @@ namespace VS.OnLineManager
         /// <summary>
         /// 频谱图信息
         /// </summary>
-        private DataTw _waveData;
+        private DataTwModel _waveData;
 
         /// <summary>
         /// 频谱图
@@ -34,7 +34,7 @@ namespace VS.OnLineManager
         /// 构造方法
         /// </summary>
         /// <param name="waveData"></param>
-        public FeatureExtraction(DataTw waveData)
+        public FeatureExtraction(DataTwModel waveData)
         {
             _waveData = waveData;
             _ratio = waveData.DataHz / (float)waveData.DataLines;
